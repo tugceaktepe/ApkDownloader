@@ -28,28 +28,14 @@ class MainActivity : AppCompatActivity() {
     lateinit var binding: ActivityMainBinding
     private val viewModel : MainViewModel by viewModels()
 
-    private lateinit var requestMultiplePermission: ActivityResultLauncher<Array<String>>
-
     @RequiresApi(Build.VERSION_CODES.N)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
 
         setContentView(binding.root)
-
-        requestMultiplePermission = registerForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions()
-        ) {
-            var isGranted = false
-            it.forEach { (s, b) ->
-                isGranted = b
-            }
-
-            if (!isGranted) {
-                Toast.makeText(this, "Permission Not Granted", Toast.LENGTH_SHORT).show()
-            }
-        }
         checkFileExist()
+
         with(binding) {
             btnDownload.setOnClickListener {
                 if(URLUtil.isValidUrl(urlText.text.toString().trim())) {
@@ -72,12 +58,6 @@ class MainActivity : AppCompatActivity() {
                 installApk()
             }
         }
-        requestMultiplePermission.launch(
-            arrayOf(
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-        )
 
     }
 

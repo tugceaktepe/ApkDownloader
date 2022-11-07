@@ -7,12 +7,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
-import androidx.work.Worker
-import androidx.work.WorkerParameters
-import androidx.work.workDataOf
+import androidx.work.*
 import com.aktepetugce.apkdownloader.util.FileParams
 import com.aktepetugce.apkdownloader.util.NotificationConstants
 import com.aktepetugce.apkdownloader.R
@@ -21,9 +20,9 @@ import java.io.FileOutputStream
 import java.net.URL
 
 class DownloadWorker(private val context: Context, workerParameters: WorkerParameters) :
-    Worker(context, workerParameters) {
+    CoroutineWorker(context, workerParameters) {
 
-    override fun doWork(): Result {
+    override suspend fun doWork(): Result {
 
         val fileUrl = inputData.getString(FileParams.KEY_FILE_URL) ?: ""
         val fileType = inputData.getString(FileParams.KEY_FILE_TYPE) ?: ""
@@ -32,31 +31,10 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
 
         deleteExistingFile()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val progress = "Downloading"
+        setForeground(createForegroundInfo(progress))
 
-            val name = NotificationConstants.CHANNEL_NAME
-            val description = NotificationConstants.CHANNEL_DESCRIPTION
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(NotificationConstants.CHANNEL_ID, name, importance)
-            channel.description = description
-
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?
-
-            notificationManager?.createNotificationChannel(channel)
-
-        }
-
-        val builder = NotificationCompat.Builder(context, NotificationConstants.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_background)
-            .setContentTitle("Downloading application...")
-            .setOngoing(true)
-            .setProgress(0, 0, true)
-
-        NotificationManagerCompat.from(context)
-            .notify(NotificationConstants.NOTIFICATION_ID, builder.build())
-
-        val uri = getSavedFileUri(
+        val uri = downloadFile(
             fileType = fileType,
             fileUrl = fileUrl,
             context = context
@@ -72,6 +50,49 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
 
     }
 
+    // Creates an instance of ForegroundInfo which can be used to update the
+    // ongoing notification.
+    private fun createForegroundInfo(progress: String): ForegroundInfo {
+        val notificationId = NotificationConstants.NOTIFICATION_ID
+        val title = context.getString(R.string.app_name)
+
+        // Create a Notification channel if necessary
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            createChannel()
+        }
+
+        val cancel = "Cancel"
+        // This PendingIntent can be used to cancel the worker
+        val intent = WorkManager.getInstance(applicationContext)
+            .createCancelPendingIntent(id)
+
+        val notification = NotificationCompat.Builder(context, NotificationConstants.CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_background)
+            .setContentTitle(title)
+            .setTicker(title)
+            .setContentText(progress)
+            .setOngoing(true)
+            .setProgress(0, 0, true)
+            .addAction(android.R.drawable.ic_delete, cancel, intent)
+            .build()
+
+
+        return ForegroundInfo(notificationId, notification)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun createChannel(){
+        val name = NotificationConstants.CHANNEL_NAME
+        val description = NotificationConstants.CHANNEL_DESCRIPTION
+        val importance = NotificationManager.IMPORTANCE_HIGH
+        val channel = NotificationChannel(NotificationConstants.CHANNEL_ID, name, importance)
+        channel.description = description
+
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?
+        notificationManager?.createNotificationChannel(channel)
+    }
+
     private fun deleteExistingFile() {
         var destination = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS).toString() + "/"
         destination += "app.apk"
@@ -81,7 +102,7 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         }
     }
 
-    private fun getSavedFileUri(
+    private fun downloadFile(
         fileType: String,
         fileUrl: String,
         context: Context
