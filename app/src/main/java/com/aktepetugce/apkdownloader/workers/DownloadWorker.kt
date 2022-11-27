@@ -1,4 +1,4 @@
-package com.aktepetugce.apkdownloader.data
+package com.aktepetugce.apkdownloader.workers
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,16 +11,25 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
+import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.aktepetugce.apkdownloader.R
+import com.aktepetugce.apkdownloader.data.repository.DownloadRepository
 import com.aktepetugce.apkdownloader.util.FileParams
 import com.aktepetugce.apkdownloader.util.NotificationConstants
-import com.aktepetugce.apkdownloader.R
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URL
+import java.io.InputStream
 
-class DownloadWorker(private val context: Context, workerParameters: WorkerParameters) :
-    CoroutineWorker(context, workerParameters) {
+@HiltWorker
+class DownloadWorker @AssistedInject constructor(
+    @Assisted val appContext: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val repository: DownloadRepository
+) :
+    CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
 
@@ -37,14 +46,14 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         val uri = downloadFile(
             fileType = fileType,
             fileUrl = fileUrl,
-            context = context
+            context = appContext
         )
 
         return if (uri != null) {
-            NotificationManagerCompat.from(context).cancel(NotificationConstants.NOTIFICATION_ID)
+            NotificationManagerCompat.from(appContext).cancel(NotificationConstants.NOTIFICATION_ID)
             Result.success(workDataOf(FileParams.KEY_FILE_URI to uri.toString()))
         } else {
-            NotificationManagerCompat.from(context).cancel(NotificationConstants.NOTIFICATION_ID)
+            NotificationManagerCompat.from(appContext).cancel(NotificationConstants.NOTIFICATION_ID)
             Result.failure()
         }
 
@@ -54,7 +63,7 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
     // ongoing notification.
     private fun createForegroundInfo(progress: String): ForegroundInfo {
         val notificationId = NotificationConstants.NOTIFICATION_ID
-        val title = context.getString(R.string.app_name)
+        val title = appContext.getString(R.string.app_name)
 
         // Create a Notification channel if necessary
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -66,7 +75,7 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         val intent = WorkManager.getInstance(applicationContext)
             .createCancelPendingIntent(id)
 
-        val notification = NotificationCompat.Builder(context, NotificationConstants.CHANNEL_ID)
+        val notification = NotificationCompat.Builder(appContext, NotificationConstants.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_background)
             .setContentTitle(title)
             .setTicker(title)
@@ -81,7 +90,7 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun createChannel(){
+    private fun createChannel() {
         val name = NotificationConstants.CHANNEL_NAME
         val description = NotificationConstants.CHANNEL_DESCRIPTION
         val importance = NotificationManager.IMPORTANCE_HIGH
@@ -89,12 +98,13 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         channel.description = description
 
         val notificationManager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?
+            appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?
         notificationManager?.createNotificationChannel(channel)
     }
 
     private fun deleteExistingFile() {
-        var destination = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS).toString() + "/"
+        var destination =
+            appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS).toString() + "/"
         destination += "app.apk"
         val file = File(destination)
         if (file.exists()) {
@@ -102,7 +112,7 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         }
     }
 
-    private fun downloadFile(
+    private suspend fun downloadFile(
         fileType: String,
         fileUrl: String,
         context: Context
@@ -121,12 +131,28 @@ class DownloadWorker(private val context: Context, workerParameters: WorkerParam
         val target = File(
             destination
         )
-        URL(fileUrl).openStream().use { input ->
-            FileOutputStream(target).use { output ->
-                input.copyTo(output)
+
+        val responseBody = repository.downloadApk(fileUrl)
+        responseBody.body()?.let {
+            var input: InputStream? = null
+            try {
+                input = it.byteStream()
+                val fos = FileOutputStream(target)
+                fos.use { output ->
+                    val buffer = ByteArray(4 * 1024) // or other buffer size
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                    }
+                    output.flush()
+                }
+                return target.toUri()
+            } catch (e: Exception) {
+                Log.e("saveFile", e.toString())
+            } finally {
+                input?.close()
             }
         }
-
-        return target.toUri()
+        return null
     }
 }

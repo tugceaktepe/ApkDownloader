@@ -1,4 +1,4 @@
-package com.aktepetugce.apkdownloader.data
+package com.aktepetugce.apkdownloader.data.model
 
 data class File(
     val type : String,
