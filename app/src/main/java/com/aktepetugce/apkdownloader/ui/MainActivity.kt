@@ -1,6 +1,5 @@
 package com.aktepetugce.apkdownloader.ui
 
-import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -9,20 +8,18 @@ import android.os.Environment
 import android.util.Log
 import android.webkit.URLUtil
 import android.widget.Toast
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Observer
 import androidx.work.*
 import com.aktepetugce.apkdownloader.BuildConfig
-import com.aktepetugce.apkdownloader.util.FileParams
-import com.aktepetugce.apkdownloader.data.DownloadWorker
-import com.aktepetugce.apkdownloader.data.File
 import com.aktepetugce.apkdownloader.databinding.ActivityMainBinding
+import com.aktepetugce.apkdownloader.util.FileParams
+import dagger.hilt.android.AndroidEntryPoint
 
-
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     lateinit var binding: ActivityMainBinding
@@ -38,13 +35,9 @@ class MainActivity : AppCompatActivity() {
 
         with(binding) {
             btnDownload.setOnClickListener {
-                if(URLUtil.isValidUrl(urlText.text.toString().trim())) {
-                    viewModel.file.value = viewModel.file.value?.copy(
-                        type = "APK",
-                        url = urlText.text.toString().trim(),
-                        downloadedUri = null
-                    )
-                    startDownloadingFile(viewModel.file.value!!)
+                val trimmedUrlText = urlText.text.toString().trim()
+                if(URLUtil.isValidUrl(trimmedUrlText)) {
+                    viewModel.startDownloadingFile(trimmedUrlText)
                 }else{
                     Toast.makeText(this@MainActivity, "Url is not valid: ${urlText.text.toString().trim()}", Toast.LENGTH_LONG).show()
                 }
@@ -57,8 +50,36 @@ class MainActivity : AppCompatActivity() {
             btnInstall.setOnClickListener {
                 installApk()
             }
-        }
 
+            viewModel.outputWorkInfos.observe(this@MainActivity, workInfosObserver())
+        }
+    }
+
+    private fun workInfosObserver(): Observer<List<WorkInfo>> {
+        return Observer { listOfWorkInfo ->
+
+                if (listOfWorkInfo.isNullOrEmpty()) {
+                    return@Observer
+                }
+                val workInfo = listOfWorkInfo[0]
+                when (workInfo.state) {
+                    WorkInfo.State.ENQUEUED -> {
+                        binding.btnInstall.isEnabled = false
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        onSuccess(workInfo.outputData.getString(FileParams.KEY_FILE_URI) ?: "")
+                    }
+                    WorkInfo.State.FAILED -> {
+                        onFailure("Downloading failed!")
+                    }
+                    WorkInfo.State.RUNNING -> {
+                        //
+                    }
+                    else -> {
+                        //failed("Something went wrong")
+                    }
+                }
+          }
     }
 
     private fun checkFileExist(){
@@ -99,58 +120,6 @@ class MainActivity : AppCompatActivity() {
            FileProvider.getUriForFile(this, BuildConfig.APPLICATION_ID + ".provider", file)
         } else {
             Uri.fromFile(file)
-        }
-    }
-    private val workManager = WorkManager.getInstance(application)
-    private fun startDownloadingFile(file: File) {
-
-        val data = Data.Builder()
-
-        data.apply {
-            putString(FileParams.KEY_FILE_URL, file.url)
-            putString(FileParams.KEY_FILE_TYPE, file.type)
-        }
-
-        //constraints
-        /*val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresStorageNotLow(true)
-            .setRequiresBatteryNotLow(true)
-            .build()*/
-
-        //worker request
-        val fileDownloadRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            //.setConstraints(constraints)
-            .setInputData(data.build())
-            .build()
-
-        //start download worker
-        workManager.beginUniqueWork(
-            "oneFileDownloadWork",
-            ExistingWorkPolicy.KEEP,
-            fileDownloadRequest
-        ).enqueue()
-
-        workManager.getWorkInfoByIdLiveData(fileDownloadRequest.id).observe(this) { info ->
-            info?.let {
-                when (it.state) {
-                    WorkInfo.State.ENQUEUED -> {
-                        binding.btnInstall.isEnabled = false
-                    }
-                    WorkInfo.State.SUCCEEDED -> {
-                        onSuccess(it.outputData.getString(FileParams.KEY_FILE_URI) ?: "")
-                    }
-                    WorkInfo.State.FAILED -> {
-                        onFailure("Downloading failed!")
-                    }
-                    WorkInfo.State.RUNNING -> {
-                        //
-                    }
-                    else -> {
-                        //failed("Something went wrong")
-                    }
-                }
-            }
         }
     }
 
